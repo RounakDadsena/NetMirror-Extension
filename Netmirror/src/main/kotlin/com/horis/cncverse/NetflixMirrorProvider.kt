@@ -11,6 +11,7 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
+import com.lagradost.api.Log
 
 class NetflixMirrorProvider : MainAPI() {
     companion object {
@@ -104,9 +105,9 @@ class NetflixMirrorProvider : MainAPI() {
         ).parsed<PostData>()
 
         val title = data.title
-        val tmdbId = data.tmdb_id
         val episodes = arrayListOf<Episode>()
         val isMovie = data.episodes.isEmpty() || data.episodes.first() == null
+        val tmdbId = data.tmdb_id ?: resolveTmdbId(title, data.year, isMovie)
 
         if (isMovie) {
             episodes.add(newEpisode(LoadData(title, id, tmdbId)) {
@@ -192,7 +193,10 @@ class NetflixMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val loadData = parseJson<LoadData>(data)
-        val tmdbId = loadData.tmdbId ?: return false
+        val tmdbId = loadData.tmdbId ?: run {
+            Log.e("NetflixMirror", "loadLinks aborted: no tmdbId for '${loadData.title}' (id=${loadData.id})")
+            return false
+        }
         val isMovie = loadData.season == null
 
         val variantsUrl = if (isMovie) {

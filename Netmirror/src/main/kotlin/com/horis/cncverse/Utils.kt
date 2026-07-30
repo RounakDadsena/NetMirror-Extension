@@ -225,3 +225,49 @@ data class NewTvPlayerResponse(
     val video_link: String? = null,
     val referer: String? = null
 )
+
+// --- TMDB ID fallback resolver ---
+// post.php sometimes omits tmdb_id entirely, which breaks loadLinks() since
+// net27.cc's endpoints are keyed by TMDB ID. This resolves it by title/year
+// against TMDB's public search API and caches the result in memory.
+
+private const val TMDB_API_KEY = "4677bab822faed7d508e63c9e716eba0"
+private val tmdbIdCache = mutableMapOf<String, String?>()
+
+suspend fun resolveTmdbId(title: String, year: String?, isMovie: Boolean): String? {
+    val cacheKey = "$title|$year|$isMovie"
+    if (tmdbIdCache.containsKey(cacheKey)) return tmdbIdCache[cacheKey]
+
+    val mediaType = if (isMovie) "movie" else "tv"
+    val result = try {
+        val url = buildString {
+            append("https://api.themoviedb.org/3/search/$mediaType")
+            append("?api_key=$TMDB_API_KEY")
+            append("&query=${java.net.URLEncoder.encode(title, "UTF-8")}")
+            if (!year.isNullOrBlank()) {
+                val yearParam = if (isMovie) "year" else "first_air_date_year"
+                append("&$yearParam=$year")
+            }
+        }
+        val response = app.get(url).parsed<TmdbSearchResponse>()
+        val id = response.results?.firstOrNull()?.id?.toString()
+        if (id == null) {
+            Log.e("NetflixMirror", "TMDB lookup found no match for title='$title' year='$year' type='$mediaType'")
+        }
+        id
+    } catch (e: Exception) {
+        Log.e("NetflixMirror", "TMDB lookup failed for title='$title' year='$year': ${e.message}")
+        null
+    }
+
+    tmdbIdCache[cacheKey] = result
+    return result
+}
+
+data class TmdbSearchResponse(
+    val results: List<TmdbSearchResult>? = null
+)
+
+data class TmdbSearchResult(
+    val id: Int? = null
+)
