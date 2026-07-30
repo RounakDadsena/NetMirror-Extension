@@ -231,7 +231,7 @@ data class NewTvPlayerResponse(
 // net27.cc's endpoints are keyed by TMDB ID. This resolves it by title/year
 // against TMDB's public search API and caches the result in memory.
 
-private const val TMDB_API_KEY = "4677bab822faed7d508e63c9e716eba0"
+private const val TMDB_READ_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJhMjRkMDU1NGUwZGE4NjdhZGMwN2NiMTlmNDExYTBlYyIsIm5iZiI6MTc0ODI0MDk5MS45MzcsInN1YiI6IjY4MzQwYTVmNWY2NDcwNTNlNzA1NTIzOSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.RRXStaFK8cRX1N26g69Qtl4GzmRS3Ebc0ygec1_kVCc"
 private val tmdbIdCache = mutableMapOf<String, String?>()
 
 suspend fun resolveTmdbId(title: String, year: String?, isMovie: Boolean): String? {
@@ -244,10 +244,15 @@ suspend fun resolveTmdbId(title: String, year: String?, isMovie: Boolean): Strin
         // (first_air_date_year especially) frequently produce false
         // negatives even for correct titles/years.
         val url = "https://api.themoviedb.org/3/search/$mediaType" +
-            "?api_key=$TMDB_API_KEY" +
-            "&query=${java.net.URLEncoder.encode(title, "UTF-8")}"
+            "?query=${java.net.URLEncoder.encode(title, "UTF-8")}"
 
-        val rawResponse = app.get(url)
+        val rawResponse = app.get(
+            url,
+            headers = mapOf(
+                "Authorization" to "Bearer $TMDB_READ_TOKEN",
+                "Accept" to "application/json"
+            )
+        )
         val rawText = rawResponse.text
 
         val parsed = try {
