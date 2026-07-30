@@ -240,23 +240,43 @@ suspend fun resolveTmdbId(title: String, year: String?, isMovie: Boolean): Strin
 
     val mediaType = if (isMovie) "movie" else "tv"
     val result = try {
-        val url = buildString {
-            append("https://api.themoviedb.org/3/search/$mediaType")
-            append("?api_key=$TMDB_API_KEY")
-            append("&query=${java.net.URLEncoder.encode(title, "UTF-8")}")
-            if (!year.isNullOrBlank()) {
-                val yearParam = if (isMovie) "year" else "first_air_date_year"
-                append("&$yearParam=$year")
+        // Query WITHOUT the year filter first — TMDB's year params
+        // (first_air_date_year especially) frequently produce false
+        // negatives even for correct titles/years.
+        val url = "https://api.themoviedb.org/3/search/$mediaType" +
+            "?api_key=$TMDB_API_KEY" +
+            "&query=${java.net.URLEncoder.encode(title, "UTF-8")}"
+
+        val rawResponse = app.get(url)
+        val rawText = rawResponse.text
+
+        val parsed = try {
+            tryParseJson<TmdbSearchResponse>(rawText)
+        } catch (_: Exception) { null }
+
+        if (parsed == null) {
+            Log.e("NetflixMirror", "TMDB response unparseable for title='$title': $rawText")
+            null
+        } else if (parsed.success == false) {
+            Log.e("NetflixMirror", "TMDB API error for title='$title': status_message='${parsed.status_message}' (check api key)")
+            null
+        } else {
+            val candidates = parsed.results.orEmpty()
+            if (candidates.isEmpty()) {
+                Log.e("NetflixMirror", "TMDB lookup found zero results for title='$title' type='$mediaType'. Raw: $rawText")
+                null
+            } else {
+                // Prefer a candidate whose release/air year matches, else fall back to first result.
+                val match = candidates.firstOrNull { candidate ->
+                    val dateStr = if (isMovie) candidate.release_date else candidate.first_air_date
+                    !year.isNullOrBlank() && dateStr?.take(4) == year
+                } ?: candidates.first()
+                Log.e("NetflixMirror", "TMDB matched '$title' -> id=${match.id} (${candidates.size} candidates)")
+                match.id?.toString()
             }
         }
-        val response = app.get(url).parsed<TmdbSearchResponse>()
-        val id = response.results?.firstOrNull()?.id?.toString()
-        if (id == null) {
-            Log.e("NetflixMirror", "TMDB lookup found no match for title='$title' year='$year' type='$mediaType'")
-        }
-        id
     } catch (e: Exception) {
-        Log.e("NetflixMirror", "TMDB lookup failed for title='$title' year='$year': ${e.message}")
+        Log.e("NetflixMirror", "TMDB lookup threw for title='$title' year='$year': ${e.message}")
         null
     }
 
@@ -265,9 +285,13 @@ suspend fun resolveTmdbId(title: String, year: String?, isMovie: Boolean): Strin
 }
 
 data class TmdbSearchResponse(
-    val results: List<TmdbSearchResult>? = null
+    val results: List<TmdbSearchResult>? = null,
+    val success: Boolean? = null,
+    val status_message: String? = null
 )
 
 data class TmdbSearchResult(
-    val id: Int? = null
+    val id: Int? = null,
+    val release_date: String? = null,
+    val first_air_date: String? = null
 )
