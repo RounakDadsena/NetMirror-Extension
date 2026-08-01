@@ -21,7 +21,7 @@ class NetflixMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "hi"
     override var mainUrl = "https://net52.cc"
-    private val newUrl = "https://net22.cc"
+    private val newUrl = "https://net27.cc"
     override var name = "Netflix"
     override val hasMainPage = true
     private var cookie_value = ""
@@ -43,11 +43,9 @@ class NetflixMirrorProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    private val net27Url = "https://net27.cc"
-    private val net27Referer = "https://videodownloader.site/"
-    private val net27Headers = mapOf(
+    private val embedHeaders = mapOf(
         "Accept" to "application/json",
-        "Referer" to net27Referer,
+        "Referer" to "https://net77.cc/",
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
     )
 
@@ -202,13 +200,13 @@ class NetflixMirrorProvider : MainAPI() {
         val isMovie = loadData.season == null
 
         val embedUrl = if (isMovie) {
-            "$net27Url/api/embed-tmdb/$tmdbId"
+            "$newUrl/api/embed-tmdb/$tmdbId"
         } else {
-            "$net27Url/api/embed-tmdb/$tmdbId?type=tv&s=${loadData.season}&e=${loadData.episode ?: 1}"
+            "$newUrl/api/embed-tmdb/$tmdbId?type=tv&s=${loadData.season}&e=${loadData.episode ?: 1}"
         }
 
         val response = try {
-            app.get(embedUrl, headers = net27Headers).parsed<Net27Response>()
+            app.get(embedUrl, headers = embedHeaders).parsed<EmbedResponse>()
         } catch (e: Exception) {
             Log.e("NetflixMirror", "embed-tmdb request failed for tmdbId=$tmdbId: ${e.message}")
             return false
@@ -224,7 +222,7 @@ class NetflixMirrorProvider : MainAPI() {
         response.streams?.forEach { stream ->
             callback.invoke(
                 newExtractorLink(name, "$name ${stream.resolution}p", stream.url, type = ExtractorLinkType.VIDEO) {
-                    this.referer = net27Referer
+                    this.referer = "https://net77.cc/"
                     this.quality = stream.resolution
                 }
             )
@@ -234,7 +232,7 @@ class NetflixMirrorProvider : MainAPI() {
         if (response.streams.isNullOrEmpty() && !response.mp4.isNullOrBlank()) {
             callback.invoke(
                 newExtractorLink(name, name, response.mp4, type = ExtractorLinkType.VIDEO) {
-                    this.referer = net27Referer
+                    this.referer = "https://net77.cc/"
                     this.quality = response.resolution?.toIntOrNull() ?: Qualities.Unknown.value
                 }
             )
@@ -246,7 +244,11 @@ class NetflixMirrorProvider : MainAPI() {
         }
 
         if (!found) {
-            Log.e("NetflixMirror", "embed-tmdb had no playable streams for tmdbId=$tmdbId")
+            if (response.noSource == true) {
+                Log.e("NetflixMirror", "embed-tmdb: no source for tmdbId=$tmdbId — ${response.error ?: "title not yet added"}")
+            } else {
+                Log.e("NetflixMirror", "embed-tmdb had no playable streams for tmdbId=$tmdbId")
+            }
         }
 
         return found
@@ -258,7 +260,7 @@ class NetflixMirrorProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val newRequest = request.newBuilder()
-                    .header("Referer", net27Referer)
+                    .header("Referer", "https://net77.cc/")
                     .build()
                 return chain.proceed(newRequest)
             }
@@ -275,20 +277,22 @@ class NetflixMirrorProvider : MainAPI() {
         val episode: Int? = null
     )
 
-    data class Net27Response(
+    data class EmbedResponse(
         val ok: Boolean? = null,
         val mp4: String? = null,
         val resolution: String? = null,
-        val streams: List<Net27Stream>? = null,
-        val captions: List<Net27Caption>? = null
+        val streams: List<EmbedStream>? = null,
+        val captions: List<EmbedCaption>? = null,
+        val noSource: Boolean? = null,
+        val error: String? = null
     )
 
-    data class Net27Stream(
+    data class EmbedStream(
         val url: String,
         val resolution: Int
     )
 
-    data class Net27Caption(
+    data class EmbedCaption(
         val lang: String,
         val name: String,
         val url: String
