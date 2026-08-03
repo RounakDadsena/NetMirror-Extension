@@ -449,15 +449,14 @@ class NetflixMirrorProvider : MainAPI() {
   }
 
   private fun extractCookiesFromResponse(response: NiceResponse) {
-    response.headers("Set-Cookie").forEach {
-      cookieStr ->
-      val keyValue = cookieStr.split(";").firstOrNull()?.trim() ?: return@forEach
-      val parts = keyValue.split("=", limit = 2)
-      if (parts.size == 2) {
-        nativeCookies[parts[0]] = parts[1]
-      }
+    response.headers.values("Set-Cookie").forEach { cookieStr ->
+        val keyValue = cookieStr.split(";").firstOrNull()?.trim() ?: return@forEach
+        val parts = keyValue.split("=", limit = 2)
+        if (parts.size == 2) {
+            nativeCookies[parts[0]] = parts[1]
+        }
     }
-  }
+}
 
   @Suppress("ObjectLiteralToLambda")
   override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
