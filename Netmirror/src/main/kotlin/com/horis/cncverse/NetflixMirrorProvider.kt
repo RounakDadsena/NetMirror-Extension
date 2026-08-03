@@ -13,6 +13,7 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 import com.lagradost.api.Log
 import java.net.URLEncoder
+import com.lagradost.nicehttp.NiceResponse
 
 class NetflixMirrorProvider : MainAPI() {
   companion object {
@@ -516,3 +517,18 @@ class NetflixMirrorProvider : MainAPI() {
     val resolution: String? = null,
     val streams: List<Net27Stream>? = null,
     val captions: List<Net27Caption>? = null,
+    val noSource: Boolean? = null,
+    val error: String? = null
+  )
+
+  data class Net27Stream(
+    val url: String,
+    val resolution: Int
+  )
+
+  data class Net27Caption(
+    val lang: String,
+    val name: String,
+    val url: String
+  )
+}
