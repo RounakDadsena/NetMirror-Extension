@@ -128,7 +128,7 @@ suspend fun bypass(mainUrl: String): String {
             }
             .build()
         client.newCall(request).execute().use { response ->
-            response.headers("Set-Cookie")
+            response.headers.values("Set-Cookie")
                 .firstOrNull { it.startsWith("t_hash_t=") }
                 ?.substringAfter("t_hash_t=")
                 ?.substringBefore(";")

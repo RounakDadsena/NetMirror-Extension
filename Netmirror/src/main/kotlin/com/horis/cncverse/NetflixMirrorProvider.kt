@@ -23,7 +23,7 @@ class NetflixMirrorProvider : MainAPI() {
   override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
   override var lang = "hi"
   override var mainUrl = "https://net52.cc"
-  private val newUrl = "https://net22.cc"
+  private val newUrl = "https://net52.cc"
   override var name = "Netflix"
   override val hasMainPage = true
   private var cookie_value = ""
@@ -463,11 +463,26 @@ class NetflixMirrorProvider : MainAPI() {
     return object : Interceptor {
       override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val newRequest = request.newBuilder()
-        .header("Referer", nativeReferer)
-        .header("Origin", nativeOrigin)
-        .build()
-        return chain.proceed(newRequest)
+        val isNativeHost = request.url.host.contains("net52") ||
+          request.url.host.contains("net77") ||
+          request.url.host.contains("net22") ||
+          request.url.host.contains("net27")
+        // Use the link's own referer (fallback flow needs videodownloader.site),
+        // defaulting to the native referer when unset.
+        val referer = extractorLink.referer?.takeIf { it.isNotBlank() } ?: nativeReferer
+        val builder = request.newBuilder()
+          .header("Referer", referer)
+        if (isNativeHost) {
+          builder.header("Origin", nativeOrigin)
+          // The native CDN requires the hotlink/cf cookies collected during warmup.
+          val cookies = mutableMapOf<String, String>()
+          if (cookie_value.isNotEmpty()) cookies["t_hash_t"] = cookie_value
+          cookies.putAll(nativeCookies)
+          if (cookies.isNotEmpty()) {
+            builder.header("Cookie", cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+          }
+        }
+        return chain.proceed(builder.build())
       }
     }
   }
