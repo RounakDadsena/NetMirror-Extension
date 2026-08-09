@@ -216,6 +216,30 @@ class NetflixMirrorProvider : MainAPI() {
     val loadData = parseJson<LoadData>(data)
     val id = loadData.id
 
+    // NewTV API flow (same as HotStar/Disney/Prime providers) — primary.
+    // No Cloudflare cookie wall: resolves the API base via mobiledetect.*
+    // domains -> checknewtv.php -> token_hash, then asks for the HLS link.
+    try {
+      val apiBase = resolveApiUrl()
+      val newTvResp = app.get(
+        "$apiBase/newtv/player.php?id=$id",
+        headers = buildNewTvHeaders("nf")
+      ).parsed<NewTvPlayerResponse>()
+
+      if (!newTvResp.video_link.isNullOrBlank()) {
+        Log.i("NetflixMirror", "NewTV flow ok for id=$id")
+        callback.invoke(
+          newExtractorLink(name, name, newTvResp.video_link, type = ExtractorLinkType.M3U8) {
+            this.referer = newTvResp.referer ?: apiBase
+          }
+        )
+        return true
+      }
+      Log.w("NetflixMirror", "NewTV flow empty for id=$id, falling back")
+    } catch (e: Exception) {
+      Log.w("NetflixMirror", "NewTV flow failed for id=$id: ${e.message}")
+    }
+
     // Ensure we have fresh cookies for the native flow
     ensureNativeCookies(id)
 
