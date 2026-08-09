@@ -220,6 +220,7 @@ class NetflixMirrorProvider : MainAPI() {
     // No Cloudflare cookie wall: resolves the API base via mobiledetect.*
     // domains -> checknewtv.php -> token_hash, then asks for the HLS link.
     try {
+      NetmirrorThrottler.throttle()
       val apiBase = resolveApiUrl()
       val newTvResp = app.get(
         "$apiBase/newtv/player.php?id=$id",
@@ -244,6 +245,7 @@ class NetflixMirrorProvider : MainAPI() {
     ensureNativeCookies(id)
 
     val playResp = try {
+      NetmirrorThrottler.throttle()
       app.post(
         playUrl,
         data = mapOf("id" to id),
@@ -279,6 +281,7 @@ class NetflixMirrorProvider : MainAPI() {
     }
 
     val playlist = try {
+      NetmirrorThrottler.throttle()
       val playlistText = app.get(
         playlistUrl,
         headers = mapOf(
