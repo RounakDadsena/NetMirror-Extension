@@ -279,7 +279,7 @@ class NetflixMirrorProvider : MainAPI() {
     }
 
     val playlist = try {
-      app.get(
+      val playlistText = app.get(
         playlistUrl,
         headers = mapOf(
           "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -290,9 +290,21 @@ class NetflixMirrorProvider : MainAPI() {
           "User-Agent" to headers["User-Agent"]!!
         ),
         cookies = nativeCookies
-      ).parsed<PlaylistResponse>()
+      ).text.trim()
+      // Server sometimes wraps the playlist in a JSON array ([{...}]) and
+      // sometimes returns the object directly — handle both.
+      if (playlistText.startsWith("[")) {
+        parseJson<List<PlaylistResponse>>(playlistText).firstOrNull()
+      } else {
+        parseJson<PlaylistResponse>(playlistText)
+      }
     } catch (e: Exception) {
       Log.e("NetflixMirror", "playlist.php failed for id=$id: ${e.message}")
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    if (playlist == null) {
+      Log.e("NetflixMirror", "playlist.php returned empty for id=$id")
       return loadLinksFallback(loadData, subtitleCallback, callback)
     }
 
