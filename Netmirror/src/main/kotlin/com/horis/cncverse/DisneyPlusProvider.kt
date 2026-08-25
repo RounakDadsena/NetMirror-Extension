@@ -20,6 +20,12 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
 class DisneyPlusProvider : MainAPI() {
+    private val nativeOrigin = "https://net77.cc"
+    private val nativeReferer = "https://net77.cc/home"
+    private val playUrl = "https://net77.cc/play.php"
+    private val playlistBaseUrl = "https://net52.cc/playlist.php"
+    private var nativeCookies = mutableMapOf<String, String>()
+
     companion object {
         var context: Context? = null
     }
@@ -217,30 +223,320 @@ class DisneyPlusProvider : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-     val apiBase = resolveApiUrl()
-        val id = parseJson<LoadData>(data).id
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+  ): Boolean {
+    val loadData = parseJson<LoadData>(data)
+    val id = loadData.id
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+    // Ensure we have fresh cookies for the native flow
+    ensureNativeCookies(id)
 
-        callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
-            }
+    val playResp = try {
+      NetmirrorThrottler.throttle()
+      app.post(
+        playUrl,
+        data = mapOf("id" to id),
+        headers = mapOf(
+          "Accept" to "application/json, text/javascript, */*; q=0.01",
+          "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+          "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+          "Origin" to nativeOrigin,
+          "Referer" to nativeReferer,
+          "X-Requested-With" to "XMLHttpRequest",
+          "User-Agent" to headers["User-Agent"]!!
+        ),
+        cookies = nativeCookies
+      ).parsed<PlayResponse>()
+    } catch (e: Exception) {
+      Log.e("NetflixMirror", "play.php failed for id=$id: ${e.message}")
+      // Fallback to old TMDB embed method
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    val h = playResp.h ?: run {
+      Log.e("NetflixMirror", "play.php returned no h-token for id=$id")
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    val tm = unixTime
+    val playlistUrl = buildString {
+      append(playlistBaseUrl)
+      append("?id=$id")
+      append("&t=${URLEncoder.encode(loadData.title, "UTF-8")}")
+      append("&tm=$tm")
+      append("&h=${URLEncoder.encode(h, "UTF-8")}")
+    }
+
+    val playlist = try {
+      NetmirrorThrottler.throttle()
+      val playlistText = app.get(
+        playlistUrl,
+        headers = mapOf(
+          "Accept" to "application/json, text/javascript, */*; q=0.01",
+          "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+          "Referer" to nativeReferer,
+          "Origin" to nativeOrigin,
+          "X-Requested-With" to "XMLHttpRequest",
+          "User-Agent" to headers["User-Agent"]!!
+        ),
+        cookies = nativeCookies
+      ).text.trim()
+      // Server sometimes wraps the playlist in a JSON array ([{...}]) and
+      // sometimes returns the object directly — handle both.
+      if (playlistText.startsWith("[")) {
+        parseJson<List<PlaylistResponse>>(playlistText).firstOrNull()
+      } else {
+        parseJson<PlaylistResponse>(playlistText)
+      }
+    } catch (e: Exception) {
+      Log.e("NetflixMirror", "playlist.php failed for id=$id: ${e.message}")
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    if (playlist == null) {
+      Log.e("NetflixMirror", "playlist.php returned empty for id=$id")
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    var found = false
+
+    // Step 3: Register HLS sources with quality
+    playlist.sources?.forEach {
+      source ->
+      val streamUrl = if (source.file.startsWith("http")) {
+        source.file
+      } else {
+        "https://net52.cc${source.file}"
+      }
+
+      val quality = when {
+        source.label.contains("1080", true) -> Qualities.P1080.value
+        source.label.contains("720", true) -> Qualities.P720.value
+        source.label.contains("480", true) -> Qualities.P480.value
+        source.label.contains("360", true) -> Qualities.P360.value
+        source.label.contains("Full HD", true) -> Qualities.P1080.value
+        source.label.contains("Mid HD", true) -> Qualities.P720.value
+        source.label.contains("Low HD", true) -> Qualities.P480.value
+        else -> Qualities.Unknown.value
+      }
+
+      callback.invoke(
+        newExtractorLink(
+          name,
+          "$name ${source.label}",
+          streamUrl,
+          type = ExtractorLinkType.M3U8
+        ) {
+          this.referer = nativeReferer
+          this.quality = quality
+        }
+      )
+      found = true
+    }
+
+    // Step 4: Register subtitle tracks
+    playlist.tracks?.forEach {
+      track ->
+      if (track.kind.equals("captions", true) || track.kind.equals("subtitles", true)) {
+        val subUrl = if (track.file.startsWith("//")) {
+          "https:${track.file}"
+        } else if (!track.file.startsWith("http")) {
+          "https://subscdn.top${track.file}"
+        } else {
+          track.file
+        }
+
+        subtitleCallback.invoke(
+          SubtitleFile(track.label, subUrl)
         )
+      }
+    }
 
-        return true
+    // If native flow found nothing, try fallback
+    if (!found) {
+      Log.w("NetflixMirror", "Native flow returned no sources for id=$id, trying fallback")
+      return loadLinksFallback(loadData, subtitleCallback, callback)
+    }
+
+    return true
+  }
+
+  // Fallback: TMDB embed API
+  private val net27Url = "https://net27.cc"
+  private val net27Referer = "https://videodownloader.site/"
+  private val net27Headers = mapOf(
+    "Accept" to "application/json",
+    "Referer" to net27Referer,
+    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+  )
+
+  private suspend fun loadLinksFallback(
+    loadData: LoadData,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+  ): Boolean {
+    val tmdbId = loadData.tmdbId ?: run {
+      Log.e("NetflixMirror", "Fallback aborted: no tmdbId for '${loadData.title}'")
+      return false
+    }
+    val isMovie = loadData.season == null
+
+    val embedUrl = if (isMovie) {
+      "$net27Url/api/embed-tmdb/$tmdbId"
+    } else {
+      "$net27Url/api/embed-tmdb/$tmdbId?type=tv&s=${loadData.season}&e=${loadData.episode ?: 1}"
+    }
+
+    val response = try {
+      app.get(embedUrl, headers = net27Headers).parsed<Net27Response>()
+    } catch (e: Exception) {
+      Log.e("NetflixMirror", "embed-tmdb request failed: ${e.message}")
+      return false
+    }
+
+    if (response.ok != true) {
+      Log.e("NetflixMirror", "embed-tmdb returned not-ok")
+      return false
+    }
+
+    var found = false
+
+    response.streams?.forEach {
+      stream ->
+      callback.invoke(
+        newExtractorLink(name, "$name ${stream.resolution}p", stream.url, type = ExtractorLinkType.VIDEO) {
+          this.referer = net27Referer
+          this.quality = stream.resolution
+        }
+      )
+      found = true
+    }
+
+    if (response.streams.isNullOrEmpty() && !response.mp4.isNullOrBlank()) {
+      callback.invoke(
+        newExtractorLink(name, name, response.mp4, type = ExtractorLinkType.VIDEO) {
+          this.referer = net27Referer
+          this.quality = response.resolution?.toIntOrNull() ?: Qualities.Unknown.value
+        }
+      )
+      found = true
+    }
+
+    response.captions?.forEach {
+      caption ->
+      subtitleCallback.invoke(SubtitleFile(caption.name, caption.url))
+    }
+
+    if (!found && response.noSource == true) {
+      val message = response.error ?: "This title is still being added. Check back later."
+      throw ErrorLoadingException(message)
+    }
+
+    return found
+  }
+
+  // Cookie management for native flow
+  private suspend fun ensureNativeCookies(contentId: String) {
+    // If we already have the essential cookies, skip
+    if (nativeCookies.containsKey("user_token") &&
+      nativeCookies.containsKey("t_hash_p") &&
+      nativeCookies.containsKey("cf_clearance")
+    ) {
+      return
+    }
+
+    // Warm up cookies by visiting the home page
+    // This should trigger Cloudflare challenge and set initial cookies
+    try {
+      val homeResp = app.get(
+        "$nativeOrigin/home",
+        headers = mapOf(
+          "User-Agent" to headers["User-Agent"]!!,
+          "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8"
+        )
+      )
+
+      // Extract cookies from response
+      extractCookiesFromResponse(homeResp)
+
+      // Also try to get the SE cookie by visiting the content page
+      val postResp = app.get(
+        "$mainUrl/mobile/post.php?id=$contentId&t=$unixTime",
+        headers = headers,
+        referer = "$mainUrl/home",
+        cookies = mapOf("t_hash_t" to cookie_value, "hd" to "on", "ott" to "nf")
+      )
+      extractCookiesFromResponse(postResp)
+
+    } catch (e: Exception) {
+      Log.w("NetflixMirror", "Cookie warmup failed: ${e.message}")
+    }
+  }
+
+  private fun extractCookiesFromResponse(response: NiceResponse) {
+    response.headers.values("Set-Cookie").forEach { cookieStr ->
+        val keyValue = cookieStr.split(";").firstOrNull()?.trim() ?: return@forEach
+        val parts = keyValue.split("=", limit = 2)
+        if (parts.size == 2) {
+            nativeCookies[parts[0]] = parts[1]
+        }
+    }
 }
 
+  
+private suspend fun ensureNativeCookies(contentId: String) {
+    // If we already have the essential cookies, skip
+    if (nativeCookies.containsKey("user_token") &&
+      nativeCookies.containsKey("t_hash_p") &&
+      nativeCookies.containsKey("cf_clearance")
+    ) {
+      return
+    }
 
+    // Warm up cookies by visiting the home page
+    // This should trigger Cloudflare challenge and set initial cookies
+    try {
+      val homeResp = app.get(
+        "$nativeOrigin/home",
+        headers = mapOf(
+          "User-Agent" to headers["User-Agent"]!!,
+          "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8"
+        )
+      )
+
+      // Extract cookies from response
+      extractCookiesFromResponse(homeResp)
+
+      // Also try to get the SE cookie by visiting the content page
+      val postResp = app.get(
+        "$mainUrl/mobile/post.php?id=$contentId&t=$unixTime",
+        headers = headers,
+        referer = "$mainUrl/home",
+        cookies = mapOf("t_hash_t" to cookie_value, "hd" to "on", "ott" to "hs")
+      )
+      extractCookiesFromResponse(postResp)
+
+    } catch (e: Exception) {
+      Log.w("NetflixMirror", "Cookie warmup failed: ${e.message}")
+    }
+  }
+
+  private fun extractCookiesFromResponse(response: NiceResponse) {
+    response.headers.values("Set-Cookie").forEach { cookieStr ->
+        val keyValue = cookieStr.split(";").firstOrNull()?.trim() ?: return@forEach
+        val parts = keyValue.split("=", limit = 2)
+        if (parts.size == 2) {
+            nativeCookies[parts[0]] = parts[1]
+        }
+    }
+}
+
+  
 data class Id(
     val id: String
 )
