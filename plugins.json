@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://raw.githubusercontent.com/Sushan64/NetMirror-Extension/refs/heads/master/Netmirror/logo.jpeg",
-        "fileHash": "sha256-e64f3bf8e62dd7bc25e3fd1900524f8f730e50807744eac9c5de38367762f057",
+        "fileHash": "sha256-4e68dd67af2e991042ff69d8f5abf615ba585a4225ad2c5ddd47a88297290bfc",
         "apiVersion": 1,
-        "repositoryUrl": "https://github.com/Sushan64/NetMirror-Extension",
-        "fileSize": 83902,
+        "repositoryUrl": "https://github.com/RounakDadsena/NetMirror-Extension",
+        "fileSize": 101290,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -17,7 +17,7 @@
         "version": 46,
         "internalName": "Netmirror",
         "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
-        "url": "https://raw.githubusercontent.com/Sushan64/NetMirror-Extension/builds/Netmirror.cs3",
+        "url": "https://raw.githubusercontent.com/RounakDadsena/NetMirror-Extension/builds/Netmirror.cs3",
         "name": "Netmirror"
     }
 ]
