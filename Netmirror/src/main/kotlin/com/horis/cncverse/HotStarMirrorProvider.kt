@@ -1,5 +1,9 @@
 package com.horis.cncverse
 
+import com.lagradost.api.Log
+import java.net.URLEncoder
+import com.lagradost.nicehttp.NiceResponse
+
 import android.content.Context
 import com.horis.cncverse.entities.EpisodesData
 import com.horis.cncverse.entities.PlayList
@@ -439,56 +443,7 @@ class HotStarMirrorProvider : MainAPI() {
     return found
   }
 
-  // Cookie management for native flow
-  private suspend fun ensureNativeCookies(contentId: String) {
-    // If we already have the essential cookies, skip
-    if (nativeCookies.containsKey("user_token") &&
-      nativeCookies.containsKey("t_hash_p") &&
-      nativeCookies.containsKey("cf_clearance")
-    ) {
-      return
-    }
 
-    // Warm up cookies by visiting the home page
-    // This should trigger Cloudflare challenge and set initial cookies
-    try {
-      val homeResp = app.get(
-        "$nativeOrigin/home",
-        headers = mapOf(
-          "User-Agent" to headers["User-Agent"]!!,
-          "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8"
-        )
-      )
-
-      // Extract cookies from response
-      extractCookiesFromResponse(homeResp)
-
-      // Also try to get the SE cookie by visiting the content page
-      val postResp = app.get(
-        "$mainUrl/mobile/post.php?id=$contentId&t=$unixTime",
-        headers = headers,
-        referer = "$mainUrl/home",
-        cookies = mapOf("t_hash_t" to cookie_value, "hd" to "on", "ott" to "nf")
-      )
-      extractCookiesFromResponse(postResp)
-
-    } catch (e: Exception) {
-      Log.w("NetflixMirror", "Cookie warmup failed: ${e.message}")
-    }
-  }
-
-  private fun extractCookiesFromResponse(response: NiceResponse) {
-    response.headers.values("Set-Cookie").forEach { cookieStr ->
-        val keyValue = cookieStr.split(";").firstOrNull()?.trim() ?: return@forEach
-        val parts = keyValue.split("=", limit = 2)
-        if (parts.size == 2) {
-            nativeCookies[parts[0]] = parts[1]
-        }
-    }
-}
-
-  
 private suspend fun ensureNativeCookies(contentId: String) {
     // If we already have the essential cookies, skip
     if (nativeCookies.containsKey("user_token") &&
@@ -559,6 +514,56 @@ private suspend fun ensureNativeCookies(contentId: String) {
     )
 
     data class LoadData(
-        val title: String, val id: String
-    )
+      val title: String,
+      val id: String,
+      val tmdbId: String? = null,
+      val season: Int? = null,
+      val episode: Int? = null
+)
+
+  // Native flow responses
+  data class PlayResponse(val h: String? = null)
+
+  data class PlaylistResponse(
+    val title: String? = null,
+    val image2: String? = null,
+    val sources: List<PlaylistSource>? = null,
+    val tracks: List<PlaylistTrack>? = null
+  )
+
+  data class PlaylistSource(
+    val file: String,
+    val label: String,
+    val type: String,
+    val default: String? = null
+  )
+
+  data class PlaylistTrack(
+    val kind: String,
+    val file: String,
+    val label: String,
+    val language: String? = null
+  )
+
+  // Fallback (TMDB embed) responses
+  data class Net27Response(
+    val ok: Boolean? = null,
+    val mp4: String? = null,
+    val resolution: String? = null,
+    val streams: List<Net27Stream>? = null,
+    val captions: List<Net27Caption>? = null,
+    val noSource: Boolean? = null,
+    val error: String? = null
+  )
+
+  data class Net27Stream(
+    val url: String,
+    val resolution: Int
+  )
+
+  data class Net27Caption(
+    val lang: String,
+    val name: String,
+    val url: String
+  )
 }
