@@ -5,4 +5,4 @@ rootProject.name = "CNCVerse"
 
 
 // To only include a single project, comment out the previous lines (except the first one), and include your plugin like so:
-include("Netmirror")
+include("NetMirrorFix")
